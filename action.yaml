@@ -1,0 +1,56 @@
+name: "Dataverse to Bluesky"
+description: >
+  Updates a list of Harvard Dataverse datasets and posts a random one to Bluesky.
+author: "Your Name <you@example.com>"
+branding:
+  icon: "bar-chart-2"
+  color: "blue"
+
+inputs:
+  base-url:
+    description: "Dataverse server URL"
+    required: false
+    default: "https://dataverse.harvard.edu"
+  alias:
+    description: "Dataverse alias (e.g. soodoku)"
+    required: true
+  output:
+    description: "Output path for datasets JSON"
+    required: false
+    default: "datasets.json"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: pip install requests atproto
+
+    - name: List datasets
+      run: |
+        python scripts/list_datasets.py \
+          -b ${{ inputs.base-url }} \
+          -t ${{ secrets.DATAVERSE_TOKEN }} \
+          --alias ${{ inputs.alias }} \
+          -o ${{ inputs.output }}
+      shell: bash
+
+    - name: Commit updated datasets.json
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add ${{ inputs.output }}
+        git commit -m "Update datasets.json [skip ci]" || echo "No changes to commit"
+        git push
+      shell: bash
+
+    - name: Post to Bluesky
+      run: python scripts/post_random_dataset_bsky.py
+      shell: bash
+      env:
+        BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
+        BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
