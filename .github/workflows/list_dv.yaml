@@ -20,7 +20,7 @@ jobs:
         env:
           DATAVERSE_TOKEN: ${{ secrets.DATAVERSE_TOKEN }}
         run: |
-          python scripts/dataverse-multi.py \
+          python scripts/dv.py \
             -b https://dataverse.harvard.edu \
             -t $DATAVERSE_TOKEN \
             -d soodoku sawasdee \
