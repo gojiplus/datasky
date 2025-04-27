@@ -1,37 +1,30 @@
-name: Monthly Dataverse + Bsky
-
+name: Dataverse + Bsky
 on:
   schedule:
-    - cron: "0 6 1 * *"  # At 6 AM UTC on the 1st of every month
+    - cron: "0 18 * * *"  # At 6 PM UTC every day
   workflow_dispatch:
-
 jobs:
   update-and-post:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
-
       - name: Install dependencies
         run: |
-          pip install requests atproto regex
-
-      - name: List datasets
+          pip install requests atproto regex tqdm
+      - name: List datasets from multiple dataverses
         env:
           DATAVERSE_TOKEN: ${{ secrets.DATAVERSE_TOKEN }}
         run: |
-          python scripts/dv.py \
+          python scripts/dataverse-multi.py \
             -b https://dataverse.harvard.edu \
             -t $DATAVERSE_TOKEN \
-            --alias soodoku \
+            -d soodoku sawasdee \
             -o datasets.json
-
       - name: Commit updated datasets.json
         run: |
           git config user.name "github-actions[bot]"
@@ -39,7 +32,6 @@ jobs:
           git add datasets.json
           git commit -m "Update datasets.json [skip ci]" || echo "No changes to commit"
           git push
-
       - name: Post a random dataset to Bsky
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
