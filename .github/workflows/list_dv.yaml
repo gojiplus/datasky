@@ -16,23 +16,34 @@ jobs:
       - name: Install dependencies
         run: |
           pip install requests atproto regex tqdm
-      - name: List datasets from multiple dataverses
+      - name: Determine if it's the first day of the month
+        id: check-date
+        run: |
+          DAY_OF_MONTH=$(date -u +%d)
+          if [[ "$DAY_OF_MONTH" == "01" ]]; then
+            echo "is_first_day=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_first_day=false" >> $GITHUB_OUTPUT
+          fi
+      - name: List datasets from multiple dataverses (1st of month only)
+        if: steps.check-date.outputs.is_first_day == 'true'
         env:
           DATAVERSE_TOKEN: ${{ secrets.DATAVERSE_TOKEN }}
         run: |
-          python scripts/dv.py \
+          python scripts/dataverse-multi.py \
             -b https://dataverse.harvard.edu \
             -t $DATAVERSE_TOKEN \
             -d soodoku sawasdee \
             -o datasets.json
-      - name: Commit updated datasets.json
+      - name: Commit updated datasets.json (1st of month only)
+        if: steps.check-date.outputs.is_first_day == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add datasets.json
-          git commit -m "Update datasets.json [skip ci]" || echo "No changes to commit"
+          git commit -m "Monthly dataset update [skip ci]" || echo "No changes to commit"
           git push
-      - name: Post a random dataset to Bsky
+      - name: Post a random dataset to Bsky (daily)
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
           BSKY_PASSWORD: ${{ secrets.BSKY_PASSWORD }}
