@@ -2,95 +2,113 @@
 import os
 import json
 import random
-import requests
-import regex  # requires: pip install regex
+import re
+import html
+import regex
 from atproto import Client
 
-# --- Configuration from environment ---
+# Configuration
 BSKY_HANDLE = os.getenv("BSKY_HANDLE")
 BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
 DATA_FILE = os.getenv("DATASETS_FILE", "datasets.json")
-MAX_LENGTH = 290
+MAX_LENGTH = 290  # leave room for facets and link text
+
 
 def load_datasets(path):
+    """Load a list of dataset dicts from JSON file."""
     with open(path, "r") as f:
         data = json.load(f)
-        # Return the datasets array from the new JSON structure
-        return data.get("datasets", [])
+    return data.get("datasets", [])
+
 
 def truncate_graphemes(text, limit):
+    """Truncate to a maximum number of Unicode grapheme clusters."""
     graphemes = regex.findall(r'\X', text)
     if len(graphemes) <= limit:
         return text
     return ''.join(graphemes[:limit - 1]) + '…'
 
+
+def clean_text(text):
+    """Strip HTML tags, unescape entities, normalize spaces."""
+    no_tags = re.sub(r'<[^>]+>', '', text)
+    unescaped = html.unescape(no_tags)
+    return unescaped.replace('\u00a0', ' ').strip()
+
+
 def format_post(dataset):
-    title = dataset.get("title", "Untitled Dataset")
-    url = dataset.get("persistentUrl", "")
-    description = dataset.get("description", "").replace("\n", " ").strip()
+    """Build the post body and facets for a random dataset."""
+    title = clean_text(dataset.get("title", "Untitled Dataset"))
+    desc_raw = dataset.get("description", "")
+    description = clean_text(desc_raw)
+    # take a snippet
+    snippet = (description[:200].rsplit(" ", 1)[0] + "…") if description else ""
+
     source = dataset.get("source_dataverse", "")
-    
-    # Add source dataverse to the post if available
-    source_text = f" (from {source})" if source else ""
-    
-    base = f"📊 {title}{source_text}\n\n{description}\n\n{url}"
-    return truncate_graphemes(base, MAX_LENGTH)
+    source_text = f" (from {clean_text(source)})" if source else ""
 
-def compute_byte_offsets(text, substring):
-    char_start = text.find(substring)
-    if char_start == -1:
-        return None, None
-    byte_start = len(text[:char_start].encode("utf-8"))
-    byte_end = byte_start + len(substring.encode("utf-8"))
-    return byte_start, byte_end
+    link_label = "dataverse link"
+    sep = "\n\n"
 
-def post_to_bsky(post_text, url):
+    # Reserve graphemes for link label and separator
+    link_gr = len(regex.findall(r'\X', link_label))
+    sep_gr = len(regex.findall(r'\X', sep))
+    max_body = MAX_LENGTH - link_gr - sep_gr
+
+    body = f"📊 {title}{source_text}{sep}{snippet}"
+    if len(regex.findall(r'\X', body)) > max_body:
+        body = truncate_graphemes(body, max_body)
+        # back off to last full word
+        if " " in body:
+            body = body.rsplit(" ", 1)[0]
+        body += '…'
+
+    full = f"{body}{sep}{link_label}"
+
+    # Compute byte offsets for facet
+    b_full = full.encode('utf-8')
+    b_body = body.encode('utf-8') + sep.encode('utf-8')
+    start = len(b_body)
+    end = start + len(link_label.encode('utf-8'))
+
+    facets = [{
+        "index": {"byteStart": start, "byteEnd": end},
+        "features": [{
+            "$type": "app.bsky.richtext.facet#link",
+            "uri": dataset.get("persistentUrl", "")
+        }]
+    }]
+
+    return full, facets
+
+
+def post_to_bsky(text, facets):
+    """Login and send a post with facets."""
     client = Client()
     client.login(BSKY_HANDLE, BSKY_PASSWORD)
-    
-    byte_start, byte_end = compute_byte_offsets(post_text, url)
-    if byte_start is None:
-        print("⚠️ Could not find URL in post_text for facet.")
-        facets = []
-    else:
-        facets = [
-            {
-                "index": {"byteStart": byte_start, "byteEnd": byte_end},
-                "features": [
-                    {
-                        "$type": "app.bsky.richtext.facet#link",
-                        "uri": url
-                    }
-                ]
-            }
-        ]
-    
-    client.send_post(post_text, facets=facets)
+    client.send_post(text, facets=facets)
     print("✅ Posted to Bluesky!")
 
+
 def main():
-    # Load datasets from the new JSON structure
+    if not BSKY_HANDLE or not BSKY_PASSWORD:
+        print("ERROR: BSKY_HANDLE and BSKY_PASSWORD must be set", file=sys.stderr)
+        return
+
     datasets = load_datasets(DATA_FILE)
-    
-    if not datasets:
-        print("No datasets found.")
+    valid = [d for d in datasets if d.get("title") and d.get("persistentUrl")]
+    if not valid:
+        print("No valid datasets found.")
         return
-    
-    # Filter out datasets with empty titles or URLs
-    valid_datasets = [d for d in datasets if d.get("title") and d.get("persistentUrl")]
-    
-    if not valid_datasets:
-        print("No valid datasets found with titles and URLs.")
-        return
-        
-    dataset = random.choice(valid_datasets)
-    post = format_post(dataset)
-    
-    print(f"Selected dataset: {dataset.get('title', 'Untitled')}")
-    print(f"From dataverse: {dataset.get('source_dataverse', 'unknown')}")
-    print(f"Post preview:\n{post}")
-    
-    post_to_bsky(post, dataset.get("persistentUrl"))
+
+    dataset = random.choice(valid)
+    post_text, facets = format_post(dataset)
+
+    print(f"Selected dataset: {dataset.get('title')}")
+    print(f"Preview:\n{post_text}")
+
+    post_to_bsky(post_text, facets)
+
 
 if __name__ == "__main__":
     main()
